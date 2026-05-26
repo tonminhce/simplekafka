@@ -115,7 +115,7 @@ All communication uses a binary TCP protocol. Key concepts:
 | 18 | ApiVersions | Negotiate protocol version |
 | 75 | DescribeTopicPartitions | Discover topic metadata |
 
-#### 9. KRaft (取代 ZooKeeper)
+#### 9. KRaft (ZooKeeper)
 
 KRaft is Kafka's built-in consensus protocol that replaces ZooKeeper. The **controller** is elected among brokers and manages cluster metadata in a special log (`__cluster_metadata`). This log stores:
 - **TOPIC_RECORD**: topic name + UUID
