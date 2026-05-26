@@ -129,19 +129,19 @@ KRaft is Kafka's built-in consensus protocol that replaces ZooKeeper. The **cont
 .------------------------.     .--------------------------------.
 |   SimpleKafkaBroker    |     |           Handlers             |
 |                        |     |  ApiVersions  |  Produce       |
-| .--------------------. |     |  Fetch        |  DescribeTopic|  
+| .--------------------. |     |  Fetch        |  DescribeTopic |  
 | |   BrokerInfo       | |     '--------------------------------'  
 | |  (id/host/port)    | |
 | '--------------------' |     .--------------------------------.
 |                        |     |         Partition              |
 | .--------------------. |     |  (segments: .log + .index)     |
-| | ClusterMetadataStore | |     '--------------------------------'
-| |  (in-memory cache)  | |
+| |ClusterMetadataStore| |     '--------------------------------'
+| | (in-memory cache)  | |
 | '--------------------' |     .--------------------------------.
-|                        |     |        LogSegment               |
+|                        |     |        LogSegment              |
 | .--------------------. |     |  (RandomAccessFile+FileChannel)|
-| |  ClusterMetadataLog  | |     '--------------------------------'
-| |  (__cluster_metadata)| |
+| |ClusterMetadataLog  | |     '--------------------------------'
+| |(__cluster_metadata)| |
 | '--------------------' |
 '------------------------'
 
@@ -153,10 +153,10 @@ KRaft is Kafka's built-in consensus protocol that replaces ZooKeeper. The **cont
 '------------------------'
 
 .----------------------------------.
-|            Shared                 |
-| RequestHeader | ResponseHeader    |
-| Protocol | ErrorCodes             |
-| CompactString | CompactArray      |
+|            Shared                |
+| RequestHeader | ResponseHeader   |
+| Protocol | ErrorCodes            |
+| CompactString | CompactArray     |
 | Int16 | Int32 | Uuid             |
 '----------------------------------'
 ```
