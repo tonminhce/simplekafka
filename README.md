@@ -215,18 +215,19 @@ RequestHeader.parse() ──► dispatchRequest(apiKey)
 - **Producer API** — `SimpleKafkaProducer.send()`
 - **Consumer API** — `SimpleKafkaConsumer.poll()` with offset tracking
 - **Protocol correctness** — INT64 for log_start_offset, bounded varint decoding
-- **Error codes** — UNKNOWN_TOPIC_OR_PARTITION, UNKNOWN_SERVER_ERROR, UNSUPPORTED_VERSION
-- **43 unit tests** covering broker startup, topic discovery, produce, fetch, and end-to-end
+- **Error codes** — UNKNOWN_TOPIC_OR_PARTITION, UNKNOWN_SERVER_ERROR, UNSUPPORTED_VERSION, and more (see `ErrorCodes.java`)
+- **76 unit tests** covering broker startup, topic discovery, produce, fetch, durability, segment rolling, and end-to-end
+- **Segment rolling** — size-based at 1GB limit, binary search across segments
+- **Index-based offset lookup** — binary search on `.index` files (O(log n) instead of O(n))
+- **Log durability** — `fsync` on every write, configurable flush interval, force on close
+- **Configurable log directory** — via `server.properties` (`log.dirs`) or `Config` class
 
 ### Not Yet Implemented
 
-- Segment rolling (size-based — `SEGMENT_SIZE_LIMIT` is defined but not enforced)
-- Index-based offset lookup (currently sequential scan)
 - Replication and ISR (In-Sync Replicas)
 - Transactional producers
 - Partition leader election (all partitions assume current broker is leader)
 - Authentication and authorization
-- Configurable log directory (hardcoded to `/tmp/kraft-combined-logs`)
 
 ---
 
