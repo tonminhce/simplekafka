@@ -23,6 +23,8 @@ public class LogSegment {
     private final long baseOffset;
     private FileChannel logChannel;
     private FileChannel indexChannel;
+    private RandomAccessFile logRaf;
+    private RandomAccessFile indexRaf;
     private int nextPosition;
 
     /**
@@ -38,8 +40,8 @@ public class LogSegment {
         this.baseOffset = baseOffset;
 
         boolean exists = logFile.exists();
-        RandomAccessFile raf = new RandomAccessFile(logFile, "rw");
-        this.logChannel = raf.getChannel();
+        this.logRaf = new RandomAccessFile(logFile, "rw");
+        this.logChannel = logRaf.getChannel();
 
         if (exists) {
             this.nextPosition = (int) logChannel.size();
@@ -48,7 +50,7 @@ public class LogSegment {
         }
 
         // Open index file
-        RandomAccessFile indexRaf = new RandomAccessFile(indexFile, "rw");
+        this.indexRaf = new RandomAccessFile(indexFile, "rw");
         this.indexChannel = indexRaf.getChannel();
 
         LOGGER.fine("LogSegment opened: " + logFile.getAbsolutePath() + " at position " + nextPosition);
@@ -120,7 +122,13 @@ public class LogSegment {
         }
 
         ByteBuffer buf = ByteBuffer.allocate(toRead);
-        logChannel.read(buf, position);
+        // Loop until the buffer is fully read — FileChannel.read may return short.
+        while (buf.hasRemaining()) {
+            int read = logChannel.read(buf, position + buf.position());
+            if (read == -1) {
+                break;
+            }
+        }
         buf.flip();
         return buf;
     }
@@ -143,6 +151,8 @@ public class LogSegment {
         try {
             if (logChannel != null) logChannel.close();
             if (indexChannel != null) indexChannel.close();
+            if (logRaf != null) logRaf.close();
+            if (indexRaf != null) indexRaf.close();
         } catch (IOException e) {
             LOGGER.log(Level.WARNING, "Error closing segment", e);
         }

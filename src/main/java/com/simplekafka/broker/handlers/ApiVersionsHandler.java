@@ -39,12 +39,18 @@ public class ApiVersionsHandler {
      * TAG_BUFFER
      */
     private ByteBuffer buildResponseBody(short requestedVersion) {
+        // Validate requested version is within supported range.
+        short errorCode = ErrorCodes.NONE;
+        if (requestedVersion < 0 || requestedVersion > 4) {
+            errorCode = ErrorCodes.UNSUPPORTED_VERSION;
+        }
+
         ApiVersionEntry[] entries = getSupportedApis();
         int size = computeBodySize(entries);
         ByteBuffer body = ByteBuffer.allocate(size);
 
         // error_code
-        Int16.write(body, ErrorCodes.NONE);
+        Int16.write(body, errorCode);
 
         // api_versions array (compact)
         CompactArray.writeCount(body, entries.length);

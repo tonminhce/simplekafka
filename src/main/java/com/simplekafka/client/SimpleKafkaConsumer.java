@@ -114,6 +114,11 @@ public class SimpleKafkaConsumer {
 
         // On-disk format: multiple entries of [base_offset(INT64) + RecordBatch bytes]
         while (buf.hasRemaining()) {
+            // Check minimum: base_offset(8) + batch_length(4) + header(45) = 57 bytes minimum
+            if (buf.remaining() < 57) {
+                break; // Truncated or incomplete batch
+            }
+
             // Read base_offset
             buf.getLong(); // base_offset
 
@@ -175,7 +180,7 @@ public class SimpleKafkaConsumer {
                 Int32.size() + // current_leader_epoch
                 8 + // fetch_offset
                 Int32.size() + // last_fetched_epoch
-                Int32.size() + // log_start_offset
+                8 + // log_start_offset (INT64)
                 Int32.size() + // partition_max_bytes
                 1; // per-partition TAG_BUFFER + per-topic TAG_BUFFER
 
@@ -199,7 +204,7 @@ public class SimpleKafkaConsumer {
         Int32.write(body, 0); // current_leader_epoch
         body.putLong(fetchOffset); // fetch_offset
         Int32.write(body, -1); // last_fetched_epoch
-        Int32.write(body, 0); // log_start_offset
+        body.putLong(0L); // log_start_offset (INT64)
         Int32.write(body, maxBytes); // partition_max_bytes
         body.put((byte) 0); // per-partition TAG_BUFFER
 

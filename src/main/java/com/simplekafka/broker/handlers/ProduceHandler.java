@@ -16,9 +16,9 @@ import com.simplekafka.shared.primitives.Int32;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -38,7 +38,7 @@ public class ProduceHandler {
     private static final String LOG_DIR = "/tmp/kraft-combined-logs";
 
     private final ClusterMetadataStore metadataStore;
-    private final Map<String, Partition> partitions = new HashMap<>();
+    private final Map<String, Partition> partitions = new ConcurrentHashMap<>();
 
     public ProduceHandler(ClusterMetadataStore metadataStore) {
         this.metadataStore = metadataStore;
@@ -62,6 +62,15 @@ public class ProduceHandler {
         List<TopicProduceResult> results = new ArrayList<>();
 
         for (int t = 0; t < topicCount; t++) {
+            // Validate acks parameter (only for supported modes).
+            if (acks < -1 || acks > 1) {
+                // Reject unsupported acks values.
+                results.add(new TopicProduceResult(CompactString.read(requestBody), List.of(
+                    new PartitionProduceResult(0, ErrorCodes.UNSUPPORTED_VERSION, -1))));
+                skipTaggedFields(requestBody);
+                continue;
+            }
+
             String topicName = CompactString.read(requestBody);
             skipTaggedFields(requestBody); // per-topic TAG_BUFFER
 
@@ -74,6 +83,11 @@ public class ProduceHandler {
                 // Read the RecordBatch as raw bytes.
                 // The record_batch is a COMPACT_BYTES field: varint length + bytes.
                 byte[] recordBatch = readCompactBytes(requestBody);
+                if (recordBatch == null) {
+                    partitionResults.add(new PartitionProduceResult(partitionIndex, ErrorCodes.UNKNOWN_SERVER_ERROR, -1));
+                    skipTaggedFields(requestBody);
+                    continue;
+                }
                 skipTaggedFields(requestBody); // per-partition TAG_BUFFER
 
                 PartitionProduceResult result = produceToPartition(topicName, partitionIndex, recordBatch);
@@ -106,17 +120,22 @@ public class ProduceHandler {
             return new PartitionProduceResult(partitionIndex, ErrorCodes.UNKNOWN_TOPIC_OR_PARTITION, -1);
         }
 
-        // Get or create the Partition object.
+        // Get or create the Partition object (thread-safe via ConcurrentHashMap).
         String partitionKey = topicName + "-" + partitionIndex;
-        Partition partition = partitions.get(partitionKey);
-        if (partition == null) {
-            try {
-                partition = new Partition(topicName, partitionIndex, LOG_DIR);
-                partitions.put(partitionKey, partition);
-            } catch (IOException e) {
-                LOGGER.log(Level.SEVERE, "Failed to create partition " + partitionKey, e);
-                return new PartitionProduceResult(partitionIndex, ErrorCodes.UNKNOWN_TOPIC_OR_PARTITION, -1);
-            }
+        Partition partition;
+        try {
+            partition = partitions.computeIfAbsent(partitionKey, k -> {
+                try {
+                    Partition p = new Partition(topicName, partitionIndex, LOG_DIR);
+                    p.initialize();
+                    return p;
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+        } catch (RuntimeException e) {
+            LOGGER.log(Level.SEVERE, "Failed to create partition " + partitionKey, e.getCause());
+            return new PartitionProduceResult(partitionIndex, ErrorCodes.UNKNOWN_SERVER_ERROR, -1);
         }
 
         // Write the RecordBatch.
@@ -125,17 +144,21 @@ public class ProduceHandler {
             return new PartitionProduceResult(partitionIndex, ErrorCodes.NONE, baseOffset);
         } catch (IOException e) {
             LOGGER.log(Level.SEVERE, "Failed to write to partition " + partitionKey, e);
-            return new PartitionProduceResult(partitionIndex, ErrorCodes.UNKNOWN_TOPIC_OR_PARTITION, -1);
+            return new PartitionProduceResult(partitionIndex, ErrorCodes.UNKNOWN_SERVER_ERROR, -1);
         }
     }
 
     /**
      * Reads a COMPACT_BYTES field (varint length + bytes).
+     * Returns null if the varint is 0 (null), empty byte array if length is 0.
      */
     private byte[] readCompactBytes(ByteBuffer buf) {
         int length = CompactString.readUnsignedVarint(buf) - 1;
-        if (length <= 0) {
-            return new byte[0];
+        if (length < 0) {
+            return null; // null COMPACT_BYTES
+        }
+        if (length == 0) {
+            return new byte[0]; // empty COMPACT_BYTES
         }
         byte[] bytes = new byte[length];
         buf.get(bytes);
@@ -208,6 +231,20 @@ public class ProduceHandler {
             int tagSize = CompactString.readUnsignedVarint(buffer);
             buffer.position(buffer.position() + tagSize);
         }
+    }
+
+    /**
+     * Closes all partition segments and releases resources.
+     */
+    public void close() {
+        for (Partition partition : partitions.values()) {
+            try {
+                partition.close();
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Error closing partition", e);
+            }
+        }
+        partitions.clear();
     }
 
     /**

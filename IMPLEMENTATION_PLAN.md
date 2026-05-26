@@ -287,7 +287,10 @@ echo -n "0000001a0012000467890abc00096b61666b612d636c69000a6b61666b612d636c69043
 # DescribeTopicPartitions request
 echo -n "00000020004b00000000000700096b61666b612d636c69000204666f6f0000000064ff00" | xxd -r -p | nc localhost 9092 | hexdump -C
 ```
-
+### Test with Demo
+```bash
+ java -cp target/simple-kafka-1.0-SNAPSHOT.jar com.simplekafka.Demo
+ ```
 ---
 
 ## File Structure (After Implementation)

@@ -6,6 +6,7 @@ package com.simplekafka.shared;
 public final class ErrorCodes {
 
     public static final short NONE = 0;
+    public static final short UNKNOWN_SERVER_ERROR = -1;
     public static final short UNKNOWN_TOPIC_OR_PARTITION = 3;
     public static final short UNSUPPORTED_VERSION = 35;
     public static final short UNKNOWN_TOPIC_ID = 100;

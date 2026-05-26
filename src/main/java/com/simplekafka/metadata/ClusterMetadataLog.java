@@ -33,6 +33,7 @@ public class ClusterMetadataLog {
 
     private final File logFile;
     private FileChannel writeChannel;
+    private RandomAccessFile writeRaf;
 
     public ClusterMetadataLog() {
         this(METADATA_DIR);
@@ -50,8 +51,8 @@ public class ClusterMetadataLog {
      * Opens the metadata log for writing. Creates the file if it doesn't exist.
      */
     public synchronized void open() throws IOException {
-        RandomAccessFile raf = new RandomAccessFile(logFile, "rw");
-        this.writeChannel = raf.getChannel();
+        this.writeRaf = new RandomAccessFile(logFile, "rw");
+        this.writeChannel = writeRaf.getChannel();
         LOGGER.info("Cluster metadata log opened: " + logFile.getAbsolutePath());
     }
 
@@ -60,6 +61,9 @@ public class ClusterMetadataLog {
      */
     public synchronized void writeTopicRecord(TopicRecord topic) throws IOException {
         byte[] nameBytes = topic.getTopicName().getBytes(StandardCharsets.UTF_8);
+        if (nameBytes.length > 255) {
+            throw new IOException("Topic name too long: " + nameBytes.length + " bytes (max 255)");
+        }
         int payloadSize = 1 + nameBytes.length + 16; // name_len(1) + name + uuid(16)
 
         ByteBuffer record = ByteBuffer.allocate(1 + 4 + payloadSize);
@@ -125,7 +129,11 @@ public class ClusterMetadataLog {
         try (RandomAccessFile raf = new RandomAccessFile(logFile, "r");
              FileChannel channel = raf.getChannel()) {
 
-            ByteBuffer buf = ByteBuffer.allocate((int) channel.size());
+            long fileSize = channel.size();
+            if (fileSize > Integer.MAX_VALUE) {
+                throw new IOException("Metadata log too large: " + fileSize + " bytes (max 2GB)");
+            }
+            ByteBuffer buf = ByteBuffer.allocate((int) fileSize);
             channel.read(buf, 0);
             buf.flip();
 
@@ -202,6 +210,13 @@ public class ClusterMetadataLog {
                 writeChannel.close();
             } catch (IOException e) {
                 LOGGER.log(Level.WARNING, "Error closing metadata log", e);
+            }
+        }
+        if (writeRaf != null) {
+            try {
+                writeRaf.close();
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "Error closing metadata log RAF", e);
             }
         }
     }

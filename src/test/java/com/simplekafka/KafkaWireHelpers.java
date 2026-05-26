@@ -5,6 +5,7 @@ import com.simplekafka.shared.primitives.CompactString;
 import com.simplekafka.shared.primitives.Int16;
 import com.simplekafka.shared.primitives.Int32;
 
+import java.net.Socket;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
@@ -27,8 +28,8 @@ final class KafkaWireHelpers {
     /**
      * Opens a blocking TCP connection to the broker using old IO Socket.
      */
-    static java.net.Socket connectSocket(String host, int port) throws IOException {
-        java.net.Socket socket = new java.net.Socket(host, port);
+    static Socket connectSocket(String host, int port) throws IOException {
+        Socket socket = new Socket(host, port);
         socket.setTcpNoDelay(true);
         return socket;
     }
@@ -38,7 +39,7 @@ final class KafkaWireHelpers {
      * response as a ByteBuffer (after 4-byte size field, includes response header).
      */
     static ByteBuffer sendAndReceive(String host, int port, ByteBuffer framed) throws IOException {
-        try (java.net.Socket socket = new java.net.Socket(host, port)) {
+        try (Socket socket = new Socket(host, port)) {
             socket.setTcpNoDelay(true);
             return sendRawSocket(socket, framed);
         }
@@ -47,7 +48,7 @@ final class KafkaWireHelpers {
     /**
      * Sends a framed request and returns the response using raw Socket IO.
      */
-    static ByteBuffer sendRawSocket(java.net.Socket socket, ByteBuffer framed) throws IOException {
+    static ByteBuffer sendRawSocket(Socket socket, ByteBuffer framed) throws IOException {
         var out = socket.getOutputStream();
         byte[] data = new byte[framed.remaining()];
         framed.get(data);
@@ -80,7 +81,7 @@ final class KafkaWireHelpers {
      * Returns the response message (after the 4-byte size field).
      */
     static ByteBuffer sendRawSocket(String host, int port, ByteBuffer framed) throws IOException {
-        try (java.net.Socket socket = new java.net.Socket(host, port)) {
+        try (Socket socket = new Socket(host, port)) {
             socket.setTcpNoDelay(true);
             return sendRawSocket(socket, framed);
         }
@@ -360,7 +361,7 @@ final class KafkaWireHelpers {
                 + Int32.size()   // current_leader_epoch
                 + 8              // fetch_offset
                 + Int32.size()   // last_fetched_epoch
-                + Int32.size()   // log_start_offset
+                + 8              // log_start_offset (INT64)
                 + Int32.size()   // partition_max_bytes
                 + 1              // per-partition TAG_BUFFER
                 + 1              // per-topic TAG_BUFFER
@@ -379,7 +380,7 @@ final class KafkaWireHelpers {
         Int32.write(body, 0);   // current_leader_epoch
         body.putLong(fetchOffset);
         Int32.write(body, -1);  // last_fetched_epoch
-        Int32.write(body, 0);   // log_start_offset
+        body.putLong(0L);       // log_start_offset (INT64)
         Int32.write(body, maxBytes);
         body.put((byte) 0);     // per-partition TAG_BUFFER
 

@@ -50,7 +50,7 @@ public class Partition {
      * Initializes the partition: creates the directory and opens existing segments
      * or creates the first segment.
      */
-    private void initialize() throws IOException {
+    public void initialize() throws IOException {
         File partitionDir = new File(logDir, topicName + "-" + partitionIndex);
         if (!partitionDir.exists() && !partitionDir.mkdirs()) {
             throw new IOException("Failed to create partition directory: " + partitionDir.getAbsolutePath());
@@ -94,6 +94,17 @@ public class Partition {
      * @return the base_offset assigned to this batch
      */
     public synchronized long appendRecordBatch(byte[] recordBatchBytes) throws IOException {
+        // Validate minimum RecordBatch header size before writing.
+        if (recordBatchBytes.length < 49) {
+            throw new IOException("RecordBatch too short: " + recordBatchBytes.length + " bytes (minimum 49)");
+        }
+
+        // Parse records count first to reject malformed data before writing to disk.
+        int recordsCount = parseRecordsCount(recordBatchBytes);
+        if (recordsCount < 0) {
+            throw new IOException("Invalid records_count: " + recordsCount);
+        }
+
         long baseOffset = nextOffset.get();
 
         // Write the RecordBatch to the active segment.
@@ -106,16 +117,6 @@ public class Partition {
         LogSegment segment = activeSegment();
         int position = segment.appendRaw(framed.array());
 
-        // Calculate how many records are in the batch by parsing the batch header.
-        // The recordBatchBytes starts after base_offset, so:
-        // batch_length(4) + partition_leader_epoch(4) + magic(1) + crc(4) + attributes(2) +
-        // last_offset_delta(4) + first_timestamp(8) + max_timestamp(8) + producer_id(8) +
-        // producer_epoch(2) + base_sequence(4) + records_count(4) = 53 bytes header
-        ByteBuffer batchBuf = ByteBuffer.wrap(recordBatchBytes);
-        // Skip to records_count: partition_leader_epoch(4) + batch_length was already consumed
-        // Actually recordBatchBytes from the Produce request starts at batch_length field.
-        // Let me parse from the client format to get records_count.
-        int recordsCount = parseRecordsCount(recordBatchBytes);
         nextOffset.addAndGet(recordsCount);
 
         // Write index entry.
@@ -208,18 +209,57 @@ public class Partition {
 
     /**
      * Finds the byte position within a segment for a given offset.
-     * Uses the index file for lookup.
+     * Scans through the log sequentially, reading each batch's base_offset
+     * and batch_length to skip to the next batch until the correct position is found.
+     * <p>
+     * On-disk layout per batch: base_offset(INT64) + batch_length(INT32) + batch_data(batch_length bytes)
      */
-    private int findPositionForOffset(LogSegment segment, long offset) {
-        long relativeOffset = offset - segment.getBaseOffset();
-        if (relativeOffset == 0) {
+    private int findPositionForOffset(LogSegment segment, long offset) throws IOException {
+        if (offset == segment.getBaseOffset()) {
             return 0;
         }
-        // For now, simple implementation: scan from beginning.
-        // A production implementation would binary-search the index.
-        // Since we store index entries, we could read them, but for simplicity
-        // we return 0 and let the caller scan.
-        return 0;
+
+        // Read the entire segment to scan for the correct position.
+        ByteBuffer data = segment.read(0, segment.size());
+        int limit = data.limit();
+        int pos = 0;
+
+        while (pos + 12 <= limit) { // at least base_offset(8) + batch_length(4)
+            long batchBaseOffset = data.getLong(pos);
+            int batchLength = data.getInt(pos + 8);
+
+            if (batchLength <= 0) {
+                break; // corrupt entry, stop scanning
+            }
+
+            int entrySize = 8 + 4 + batchLength; // base_offset + batch_length + batch_data
+
+            if (batchBaseOffset == offset) {
+                return pos;
+            }
+
+            int nextPos = pos + entrySize;
+
+            // If this is the last batch, and our offset falls within it, return current pos.
+            if (nextPos > limit) {
+                if (offset >= batchBaseOffset) {
+                    return pos;
+                }
+                break;
+            }
+
+            // Peek at the next batch's base_offset.
+            if (nextPos + 8 <= limit) {
+                long nextBaseOffset = data.getLong(nextPos);
+                if (nextBaseOffset > offset && offset >= batchBaseOffset) {
+                    return pos;
+                }
+            }
+
+            pos = nextPos;
+        }
+
+        return pos; // best-effort: return last known position
     }
 
     public String getTopicName() {
@@ -232,5 +272,14 @@ public class Partition {
 
     public long getNextOffset() {
         return nextOffset.get();
+    }
+
+    /**
+     * Closes all log segments and releases resources.
+     */
+    public synchronized void close() {
+        for (LogSegment segment : segments) {
+            segment.close();
+        }
     }
 }

@@ -9,6 +9,7 @@ import com.simplekafka.metadata.ClusterMetadataStore;
 import com.simplekafka.metadata.PartitionRecord;
 import com.simplekafka.metadata.TopicRecord;
 import com.simplekafka.shared.RequestHeader;
+import com.simplekafka.shared.ResponseHeader;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -19,6 +20,7 @@ import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Semaphore;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -29,12 +31,15 @@ import java.util.logging.Logger;
 public class SimpleKafkaBroker {
 
     private static final Logger LOGGER = Logger.getLogger(SimpleKafkaBroker.class.getName());
+    private static final int MAX_REQUEST_SIZE = 100 * 1024 * 1024; // 100MB
+    private static final int MAX_CONNECTIONS = 1000;
+    private final Semaphore connectionSemaphore = new Semaphore(MAX_CONNECTIONS);
 
     private final int port;
     private final int brokerId;
     private volatile boolean running;
     private volatile boolean isController = false;
-    private int controllerEpoch = 0;
+    private volatile int controllerEpoch = 0;
     private ServerSocket serverSocket;
 
     private final BrokerInfo brokerInfo;
@@ -143,7 +148,19 @@ public class SimpleKafkaBroker {
 
                 LOGGER.info("Accepted connection from " + clientSocket.getRemoteSocketAddress());
 
-                Thread.ofVirtual().start(() -> handleClient(clientSocket));
+                if (!connectionSemaphore.tryAcquire()) {
+                    LOGGER.warning("Max connections reached, rejecting: " + clientSocket.getRemoteSocketAddress());
+                    clientSocket.close();
+                    continue;
+                }
+
+                Thread.ofVirtual().start(() -> {
+                    try {
+                        handleClient(clientSocket);
+                    } finally {
+                        connectionSemaphore.release();
+                    }
+                });
 
             } catch (IOException e) {
                 if (running) {
@@ -166,7 +183,7 @@ public class SimpleKafkaBroker {
 
                 int messageSize = ByteBuffer.wrap(sizeBytes).getInt();
 
-                if (messageSize <= 0) {
+                if (messageSize <= 0 || messageSize > MAX_REQUEST_SIZE) {
                     LOGGER.warning("Invalid message size: " + messageSize);
                     break;
                 }
@@ -189,7 +206,7 @@ public class SimpleKafkaBroker {
                     }
                 } catch (Exception e) {
                     LOGGER.log(Level.WARNING, "Failed to process request", e);
-                    break;
+                    // Continue serving the connection for recoverable errors.
                 }
             }
         } catch (IOException e) {
@@ -218,7 +235,14 @@ public class SimpleKafkaBroker {
             case 1: return fetchHandler.handle(header, requestBody);
             default:
                 LOGGER.warning("Unsupported API key: " + header.getApiKey());
-                return null;
+                // Return an error response so the client gets something instead of hanging.
+                // error_code = UNSUPPORTED_VERSION (35), no body (just header + empty TAG_BUFFER).
+                int messageSize = ResponseHeader.size();
+                ByteBuffer errorBody = ByteBuffer.allocate(messageSize);
+                ResponseHeader errorHeader = new ResponseHeader(header.getCorrelationId());
+                errorHeader.write(errorBody);
+                errorBody.flip();
+                return errorBody;
         }
     }
 
@@ -230,6 +254,7 @@ public class SimpleKafkaBroker {
             }
         } catch (IOException ignored) {}
         metadataLog.close();
+        produceHandler.close();
         LOGGER.info("Broker shutting down");
     }
 }

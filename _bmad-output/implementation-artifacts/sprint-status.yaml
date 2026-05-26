@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-26T03:03:59.560Z
-last_updated: 2026-05-26T03:03:59.560Z
+last_updated: 2026-05-26T13:45:00.000Z
 project: simplekafka
 project_key: NOKEY
 tracking_system: file-system
@@ -43,7 +43,7 @@ story_location: _bmad-output/implementation-artifacts
 
 development_status:
   # Epic 1: Broker Startup & Protocol Negotiation
-  epic-1: in-progress
+  epic-1: done
   1-1-broker-server-startup: done
   1-2-apiversions-response: done
   1-3-protocol-parsing: done
@@ -52,7 +52,7 @@ development_status:
   epic-1-retrospective: optional
 
   # Epic 2: Topic Metadata Discovery
-  epic-2: in-progress
+  epic-2: done
   2-1-unknown-topic-error: done
   2-2-existing-topic-metadata: done
   2-3-multi-partition-metadata: done
@@ -60,7 +60,7 @@ development_status:
   epic-2-retrospective: optional
 
   # Epic 3: Message Production
-  epic-3: in-progress
+  epic-3: done
   3-1-produce-api-apiversions: done
   3-2-produce-invalid-topic-error: done
   3-3-topic-partition-validation: done
@@ -71,7 +71,7 @@ development_status:
   epic-3-retrospective: optional
 
   # Epic 4: Message Consumption
-  epic-4: in-progress
+  epic-4: done
   4-1-fetch-empty-response: done
   4-2-fetch-unknown-topic-error: done
   4-3-fetch-empty-records: done
@@ -79,7 +79,7 @@ development_status:
   epic-4-retrospective: optional
 
   # Epic 5: Cluster Management & Integration
-  epic-5: in-progress
+  epic-5: done
   5-1-persist-creation-records: done
   5-2-kraft-controller-election: done
   5-3-end-to-end-producer-consumer: done

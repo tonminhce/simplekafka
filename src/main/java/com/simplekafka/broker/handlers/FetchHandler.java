@@ -68,7 +68,7 @@ public class FetchHandler {
                 int currentLeaderEpoch = Int32.read(requestBody);
                 long fetchOffset = requestBody.getLong(); // fetch_offset
                 int lastFetchedEpoch = Int32.read(requestBody); // last_fetched_epoch
-                int logStartOffset = Int32.read(requestBody); // log_start_offset
+                long logStartOffset = requestBody.getLong(); // log_start_offset (INT64)
                 int partitionMaxBytes = Int32.read(requestBody); // partition_max_bytes
 
                 FetchPartitionResult result = fetchFromPartition(topicId, partitionIndex, fetchOffset, partitionMaxBytes);
@@ -115,7 +115,7 @@ public class FetchHandler {
             return new FetchPartitionResult(partitionIndex, ErrorCodes.NONE, highWatermark, recordsBytes);
         } catch (IOException e) {
             LOGGER.log(Level.WARNING, "Failed to read from partition " + topic.getTopicName() + "-" + partitionIndex, e);
-            return new FetchPartitionResult(partitionIndex, ErrorCodes.UNKNOWN_TOPIC_ID, 0, new byte[0]);
+            return new FetchPartitionResult(partitionIndex, ErrorCodes.UNKNOWN_SERVER_ERROR, 0, new byte[0]);
         }
     }
 

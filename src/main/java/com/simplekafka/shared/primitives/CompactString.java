@@ -61,6 +61,9 @@ public final class CompactString {
         int shift = 0;
         int b;
         do {
+            if (!buffer.hasRemaining() || shift > 28) {
+                throw new IllegalArgumentException("Malformed varint");
+            }
             b = buffer.get() & 0xFF;
             value |= (b & 0x7F) << shift;
             shift += 7;

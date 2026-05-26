@@ -47,8 +47,10 @@ public class ClusterMetadataStore {
                 (a, b) -> Integer.compare(a.getPartitionId(), b.getPartitionId()));
         if (idx < 0) {
             idx = -idx - 1;
+            partitions.add(idx, partition);
+        } else {
+            partitions.set(idx, partition); // replace existing
         }
-        partitions.add(idx, partition);
     }
 
     /**

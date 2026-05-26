@@ -95,6 +95,9 @@ public class SimpleKafkaClient {
 
         // Parse response header v1: correlation_id + TAG_BUFFER.
         int correlationId = Int32.read(message);
+        if (correlationId != expectedCorrelationId) {
+            throw new IOException("Correlation ID mismatch: expected " + expectedCorrelationId + ", got " + correlationId);
+        }
         skipTagBuffer(message);
 
         return message;
