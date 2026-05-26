@@ -160,8 +160,6 @@ KRaft is Kafka's built-in consensus protocol that replaces ZooKeeper. The **cont
 | Int16 | Int32 | Uuid             |
 '----------------------------------'
 ```
-```
-
 ### Layer Descriptions
 
 | Layer | Package | Responsibility |
