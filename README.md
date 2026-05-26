@@ -126,37 +126,40 @@ KRaft is Kafka's built-in consensus protocol that replaces ZooKeeper. The **cont
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         SimpleKafkaBroker                       │
-│                                                                  │
-│  ┌──────────────┐    ┌────────────────────────────────────────┐ │
-│  │   BrokerInfo  │    │              Handlers               │ │
-│  │  (id/host/port)│    │  ApiVersions │ Produce │ Fetch │ Desc│ │
-│  └──────────────┘    └────────────────────────────────────────┘ │
-│                                                                  │
-│  ┌───────────────────┐    ┌──────────────────────────────────┐ │
-│  │  ClusterMetadataStore │    │         Partition              │ │
-│  │  (in-memory cache)   │    │  (segments: .log + .index)    │ │
-│  └───────────────────┘    └──────────────────────────────────┘ │
-│                                                                  │
-│  ┌───────────────────┐    ┌──────────────────────────────────┐ │
-│  │  ClusterMetadataLog  │    │       LogSegment                │ │
-│  │  (__cluster_metadata)│    │  (RandomAccessFile + FileChannel)│ │
-│  └───────────────────┘    └──────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
+.------------------------.     .--------------------------------.
+|   SimpleKafkaBroker    |     |           Handlers             |
+|                        |     |  ApiVersions  |  Produce       |
+| .--------------------. |     |  Fetch        |  DescribeTopic|  
+| |   BrokerInfo       | |     '--------------------------------'  
+| |  (id/host/port)    | |
+| '--------------------' |     .--------------------------------.
+|                        |     |         Partition              |
+| .--------------------. |     |  (segments: .log + .index)     |
+| | ClusterMetadataStore | |     '--------------------------------'
+| |  (in-memory cache)  | |
+| '--------------------' |     .--------------------------------.
+|                        |     |        LogSegment               |
+| .--------------------. |     |  (RandomAccessFile+FileChannel)|
+| |  ClusterMetadataLog  | |     '--------------------------------'
+| |  (__cluster_metadata)| |
+| '--------------------' |
+'------------------------'
 
-┌─────────────────────────────────────────────────────────────────┐
-│                      SimpleKafkaClient                          │
-│  ┌─────────────┐  ┌────────────────┐  ┌──────────────────────┐ │
-│  │  Producer   │  │   Consumer     │  │  (sendRequest/receive)│ │
-│  └─────────────┘  └────────────────┘  └──────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
+.------------------------.
+|  SimpleKafkaClient     |
+| .----------. .--------.|
+| | Producer | |Consumer||
+| '----------' '--------'|
+'------------------------'
 
-┌─────────────────────────────────────────────────────────────────┐
-│                         Shared                                   │
-│  RequestHeader │ ResponseHeader │ Protocol │ ErrorCodes        │
-│  CompactString │ CompactArray │ Int16 │ Int32 │ Uuid           │
-└─────────────────────────────────────────────────────────────────┘
+.----------------------------------.
+|            Shared                 |
+| RequestHeader | ResponseHeader    |
+| Protocol | ErrorCodes             |
+| CompactString | CompactArray      |
+| Int16 | Int32 | Uuid             |
+'----------------------------------'
+```
 ```
 
 ### Layer Descriptions
