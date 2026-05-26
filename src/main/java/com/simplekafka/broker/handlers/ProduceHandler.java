@@ -35,13 +35,24 @@ import java.util.logging.Logger;
 public class ProduceHandler {
 
     private static final Logger LOGGER = Logger.getLogger(ProduceHandler.class.getName());
-    private static final String LOG_DIR = "/tmp/kraft-combined-logs";
 
     private final ClusterMetadataStore metadataStore;
+    private final String logDir;
+    private final long flushIntervalMs;
     private final Map<String, Partition> partitions = new ConcurrentHashMap<>();
 
     public ProduceHandler(ClusterMetadataStore metadataStore) {
+        this(metadataStore, "/tmp/kraft-combined-logs", 0);
+    }
+
+    public ProduceHandler(ClusterMetadataStore metadataStore, String logDir) {
+        this(metadataStore, logDir, 0);
+    }
+
+    public ProduceHandler(ClusterMetadataStore metadataStore, String logDir, long flushIntervalMs) {
         this.metadataStore = metadataStore;
+        this.logDir = logDir;
+        this.flushIntervalMs = flushIntervalMs;
     }
 
     /**
@@ -126,7 +137,7 @@ public class ProduceHandler {
         try {
             partition = partitions.computeIfAbsent(partitionKey, k -> {
                 try {
-                    Partition p = new Partition(topicName, partitionIndex, LOG_DIR);
+                    Partition p = new Partition(topicName, partitionIndex, logDir, flushIntervalMs);
                     p.initialize();
                     return p;
                 } catch (IOException e) {

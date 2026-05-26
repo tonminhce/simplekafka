@@ -8,6 +8,7 @@ import com.simplekafka.metadata.ClusterMetadataLog;
 import com.simplekafka.metadata.ClusterMetadataStore;
 import com.simplekafka.metadata.PartitionRecord;
 import com.simplekafka.metadata.TopicRecord;
+import com.simplekafka.shared.Config;
 import com.simplekafka.shared.RequestHeader;
 import com.simplekafka.shared.ResponseHeader;
 
@@ -37,6 +38,7 @@ public class SimpleKafkaBroker {
 
     private final int port;
     private final int brokerId;
+    private final Config config;
     private volatile boolean running;
     private volatile boolean isController = false;
     private volatile int controllerEpoch = 0;
@@ -47,19 +49,27 @@ public class SimpleKafkaBroker {
     private final ClusterMetadataStore metadataStore = new ClusterMetadataStore();
     private final DescribeTopicPartitionsHandler describeTopicPartitionsHandler =
             new DescribeTopicPartitionsHandler(metadataStore);
-    private final ProduceHandler produceHandler = new ProduceHandler(metadataStore);
-    private final FetchHandler fetchHandler = new FetchHandler(metadataStore, produceHandler);
-    private final ClusterMetadataLog metadataLog = new ClusterMetadataLog();
+    private final ProduceHandler produceHandler;
+    private final FetchHandler fetchHandler;
+    private final ClusterMetadataLog metadataLog;
 
-    public SimpleKafkaBroker(int port) {
+    public SimpleKafkaBroker(int port) throws IOException {
         this(port, 1);
     }
 
-    public SimpleKafkaBroker(int port, int brokerId) {
-        this.port = port;
-        this.brokerId = brokerId;
+    public SimpleKafkaBroker(int port, int brokerId) throws IOException {
+        this(new Config(brokerId, port, "/tmp/kraft-combined-logs"));
+    }
+
+    public SimpleKafkaBroker(Config config) throws IOException {
+        this.config = config;
+        this.port = config.getPort();
+        this.brokerId = config.getBrokerId();
         this.running = false;
         this.brokerInfo = new BrokerInfo(brokerId, "localhost", port);
+        this.produceHandler = new ProduceHandler(metadataStore, config.getLogDir(), config.getFlushIntervalMs());
+        this.fetchHandler = new FetchHandler(metadataStore, produceHandler);
+        this.metadataLog = new ClusterMetadataLog(config.getLogDir());
     }
 
     public ClusterMetadataStore getMetadataStore() {

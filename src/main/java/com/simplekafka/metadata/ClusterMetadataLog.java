@@ -26,7 +26,6 @@ import java.util.logging.Logger;
 public class ClusterMetadataLog {
 
     private static final Logger LOGGER = Logger.getLogger(ClusterMetadataLog.class.getName());
-    private static final String METADATA_DIR = "/tmp/kraft-combined-logs/__cluster_metadata-0";
     private static final String METADATA_FILE = "00000000000000000000.log";
     private static final byte TOPIC_RECORD_TYPE = 2;
     private static final byte PARTITION_RECORD_TYPE = 3;
@@ -35,14 +34,18 @@ public class ClusterMetadataLog {
     private FileChannel writeChannel;
     private RandomAccessFile writeRaf;
 
-    public ClusterMetadataLog() {
-        this(METADATA_DIR);
+    public ClusterMetadataLog() throws IOException {
+        this("/tmp/kraft-combined-logs");
     }
 
-    public ClusterMetadataLog(String metadataDir) {
-        File dir = new File(metadataDir);
+    /**
+     * Creates a ClusterMetadataLog using the specified base log directory.
+     * Metadata is stored under {@code logDir/__cluster_metadata-0/}.
+     */
+    public ClusterMetadataLog(String logDir) throws IOException {
+        File dir = new File(logDir, "__cluster_metadata-0");
         if (!dir.exists() && !dir.mkdirs()) {
-            LOGGER.warning("Failed to create metadata directory: " + dir.getAbsolutePath());
+            throw new IOException("Failed to create metadata directory: " + dir.getAbsolutePath());
         }
         this.logFile = new File(dir, METADATA_FILE);
     }

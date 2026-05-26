@@ -21,11 +21,13 @@ public class LogSegment {
     private final File logFile;
     private final File indexFile;
     private final long baseOffset;
+    private final long flushIntervalMs;
     private FileChannel logChannel;
     private FileChannel indexChannel;
     private RandomAccessFile logRaf;
     private RandomAccessFile indexRaf;
-    private int nextPosition;
+    private long nextPosition;
+    private volatile long lastFlushTimeNanos;
 
     /**
      * Creates or opens an existing log segment.
@@ -35,9 +37,15 @@ public class LogSegment {
      * @param baseOffset the base offset of this segment
      */
     public LogSegment(File logFile, File indexFile, long baseOffset) throws IOException {
+        this(logFile, indexFile, baseOffset, 0);
+    }
+
+    public LogSegment(File logFile, File indexFile, long baseOffset, long flushIntervalMs) throws IOException {
         this.logFile = logFile;
         this.indexFile = indexFile;
         this.baseOffset = baseOffset;
+        this.flushIntervalMs = flushIntervalMs;
+        this.lastFlushTimeNanos = System.nanoTime();
 
         boolean exists = logFile.exists();
         this.logRaf = new RandomAccessFile(logFile, "rw");
@@ -63,7 +71,7 @@ public class LogSegment {
      * @return the file position where the batch was written
      */
     public synchronized int append(ByteBuffer recordBatch) throws IOException {
-        int position = nextPosition;
+        long position = nextPosition;
 
         // Write base_offset (8 bytes) + batch data
         ByteBuffer writeBuf = ByteBuffer.allocate(8 + recordBatch.remaining());
@@ -74,7 +82,7 @@ public class LogSegment {
         logChannel.write(writeBuf, position);
         nextPosition = position + writeBuf.limit();
 
-        return position;
+        return (int) position;
     }
 
     /**
@@ -83,13 +91,14 @@ public class LogSegment {
      * @param recordBatch the complete record batch bytes including base_offset
      * @return the file position where the batch was written
      */
-    public synchronized int appendRaw(byte[] recordBatch) throws IOException {
-        int position = nextPosition;
+    public synchronized long appendRaw(byte[] recordBatch) throws IOException {
+        long position = nextPosition;
 
         ByteBuffer writeBuf = ByteBuffer.wrap(recordBatch);
         logChannel.write(writeBuf, position);
         nextPosition = position + recordBatch.length;
 
+        maybeForceLog();
         return position;
     }
 
@@ -105,6 +114,7 @@ public class LogSegment {
 
         long indexPos = indexChannel.size();
         indexChannel.write(entry, indexPos);
+        maybeForceIndex();
     }
 
     /**
@@ -114,17 +124,18 @@ public class LogSegment {
      * @param maxBytes maximum bytes to read
      * @return ByteBuffer with the data read
      */
-    public synchronized ByteBuffer read(int position, int maxBytes) throws IOException {
-        int available = nextPosition - position;
-        int toRead = Math.min(available, maxBytes);
+    public synchronized ByteBuffer read(long position, int maxBytes) throws IOException {
+        long available = nextPosition - position;
+        int toRead = (int) Math.min(available, (long) maxBytes);
         if (toRead <= 0) {
             return ByteBuffer.allocate(0);
         }
 
         ByteBuffer buf = ByteBuffer.allocate(toRead);
         // Loop until the buffer is fully read — FileChannel.read may return short.
+        long filePos = position;
         while (buf.hasRemaining()) {
-            int read = logChannel.read(buf, position + buf.position());
+            int read = logChannel.read(buf, filePos + buf.position());
             if (read == -1) {
                 break;
             }
@@ -134,10 +145,119 @@ public class LogSegment {
     }
 
     /**
+     * Looks up the byte position for a given relative offset using the index file.
+     * Uses binary search on the index entries.
+     * <p>
+     * Each index entry is 8 bytes: relative_offset (INT32) + byte_position (INT32).
+     *
+     * @param relativeOffset the relative offset to look up
+     * @return the byte position, or -1 if the index is empty or corrupt
+     */
+    public synchronized int lookupPosition(int relativeOffset) throws IOException {
+        long indexSize = indexChannel.size();
+        if (indexSize < 8) {
+            return -1; // Empty or no entries
+        }
+
+        int entryCount = (int) (indexSize / 8);
+        if (entryCount <= 0) {
+            return -1;
+        }
+
+        // Read all index entries into memory for binary search.
+        // Cast to long before multiplication to prevent int overflow (e.g., entryCount ~250M → overflow)
+        ByteBuffer indexBuf = ByteBuffer.allocate((int) ((long) entryCount * 8));
+        indexChannel.read(indexBuf, 0);
+        indexBuf.flip();
+
+        // Binary search for the largest relativeOffset <= target.
+        int lo = 0;
+        int hi = entryCount - 1;
+        int bestPosition = -1;
+
+        while (lo <= hi) {
+            int mid = lo + (hi - lo) / 2; // overflow-safe
+            int entryOffset = indexBuf.getInt(mid * 8);
+            int entryPosition = indexBuf.getInt(mid * 8 + 4);
+
+            if (entryOffset <= relativeOffset) {
+                bestPosition = entryPosition;
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+
+        return bestPosition;
+    }
+
+    /**
      * Returns the byte size of this segment.
      */
-    public int size() {
+    public long size() {
         return nextPosition;
+    }
+
+    /**
+     * Returns the configured flush interval in milliseconds.
+     */
+    public long getFlushIntervalMs() {
+        return flushIntervalMs;
+    }
+
+    /**
+     * Returns the timestamp of the last successful flush in nanoseconds.
+     * Note: Uses nanoTime internally (monotonic), not wall-clock time.
+     */
+    public long getLastFlushTime() {
+        return lastFlushTimeNanos;
+    }
+
+    /**
+     * Forces an immediate fsync of both log and index channels.
+     */
+    public synchronized void forceFlush() throws IOException {
+        if (logChannel != null && logChannel.isOpen()) {
+            logChannel.force(false);
+        }
+        if (indexChannel != null && indexChannel.isOpen()) {
+            indexChannel.force(false);
+        }
+        lastFlushTimeNanos = System.nanoTime();
+    }
+
+    /**
+     * Conditionally fsyncs the log channel based on flush interval.
+     * If flushIntervalMs == 0, always fsync (synchronous mode).
+     * Otherwise, only fsync when the interval has elapsed.
+     */
+    private void maybeForceLog() throws IOException {
+        if (flushIntervalMs == 0) {
+            logChannel.force(false);
+            indexChannel.force(false);  // also sync index in synchronous mode
+            lastFlushTimeNanos = System.nanoTime();
+        } else {
+            long now = System.nanoTime();
+            long elapsedNanos = now - lastFlushTimeNanos;
+            // Guard against nanoTime wraparound (extremely rare) or negative (shouldn't happen)
+            if (elapsedNanos >= flushIntervalMs * 1_000_000L) {
+                logChannel.force(false);
+                indexChannel.force(false);  // also sync index in batched mode
+                lastFlushTimeNanos = now;
+            }
+        }
+    }
+
+    /**
+     * Conditionally fsyncs the index channel based on flush interval.
+     * Always fsyncs in synchronous mode (flushIntervalMs == 0).
+     */
+    private void maybeForceIndex() throws IOException {
+        if (flushIntervalMs == 0) {
+            indexChannel.force(false);
+            lastFlushTimeNanos = System.nanoTime();
+        }
+        // In batched mode, index fsync happens together with log fsync in maybeForceLog
     }
 
     public long getBaseOffset() {
@@ -148,13 +268,47 @@ public class LogSegment {
      * Closes the segment files.
      */
     public synchronized void close() {
-        try {
-            if (logChannel != null) logChannel.close();
-            if (indexChannel != null) indexChannel.close();
-            if (logRaf != null) logRaf.close();
-            if (indexRaf != null) indexRaf.close();
-        } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Error closing segment", e);
+        IOException forceLogError = null;
+        IOException forceIndexError = null;
+
+        // Attempt force — errors are collected but never prevent close.
+        if (logChannel != null && logChannel.isOpen()) {
+            try {
+                logChannel.force(false);
+            } catch (IOException e) {
+                forceLogError = e;
+            }
+        }
+        if (indexChannel != null && indexChannel.isOpen()) {
+            try {
+                indexChannel.force(false);
+            } catch (IOException e) {
+                forceIndexError = e;
+            }
+        }
+
+        // Close channels regardless of force() outcome — this is the critical step.
+        if (logChannel != null) {
+            try { logChannel.close(); } catch (IOException ignored) {}
+            logChannel = null;
+        }
+        if (indexChannel != null) {
+            try { indexChannel.close(); } catch (IOException ignored) {}
+            indexChannel = null;
+        }
+        if (logRaf != null) {
+            try { logRaf.close(); } catch (IOException ignored) {}
+            logRaf = null;
+        }
+        if (indexRaf != null) {
+            try { indexRaf.close(); } catch (IOException ignored) {}
+            indexRaf = null;
+        }
+
+        // Log force errors after close is done — close always succeeds.
+        if (forceLogError != null || forceIndexError != null) {
+            LOGGER.log(Level.WARNING, "Error flushing segment during close", forceLogError);
+            LOGGER.log(Level.WARNING, "Error flushing index during close", forceIndexError);
         }
     }
 }

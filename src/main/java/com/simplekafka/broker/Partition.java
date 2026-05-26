@@ -4,6 +4,8 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
@@ -27,6 +29,7 @@ public class Partition {
     private final String topicName;
     private final int partitionIndex;
     private final String logDir;
+    private final long flushIntervalMs;
     private final AtomicLong nextOffset;
     private final List<LogSegment> segments = new ArrayList<>();
 
@@ -38,9 +41,22 @@ public class Partition {
      * @param logDir         the base log directory (e.g., /tmp/kraft-combined-logs)
      */
     public Partition(String topicName, int partitionIndex, String logDir) throws IOException {
+        this(topicName, partitionIndex, logDir, 0);
+    }
+
+    /**
+     * Creates a partition with a configurable flush interval.
+     *
+     * @param topicName       the topic name
+     * @param partitionIndex  the partition index
+     * @param logDir          the base log directory
+     * @param flushIntervalMs fsync interval in ms (0 = synchronous, always fsync)
+     */
+    public Partition(String topicName, int partitionIndex, String logDir, long flushIntervalMs) throws IOException {
         this.topicName = topicName;
         this.partitionIndex = partitionIndex;
         this.logDir = logDir;
+        this.flushIntervalMs = flushIntervalMs;
         this.nextOffset = new AtomicLong(0);
 
         initialize();
@@ -73,7 +89,7 @@ public class Partition {
         File logFile = new File(partitionDir, logName);
         File indexFile = new File(partitionDir, indexName);
 
-        LogSegment segment = new LogSegment(logFile, indexFile, baseOffset);
+        LogSegment segment = new LogSegment(logFile, indexFile, baseOffset, flushIntervalMs);
         segments.add(segment);
     }
 
@@ -107,21 +123,44 @@ public class Partition {
 
         long baseOffset = nextOffset.get();
 
-        // Write the RecordBatch to the active segment.
+        // Check if the active segment would exceed the size limit with this batch.
+        // We check BEFORE writing so we don't write to a full segment.
+        // The on-disk entry is 8 (base_offset) + recordBatchBytes.length bytes.
+        long entrySize = 8L + recordBatchBytes.length;
+
+        // Roll segment if needed, then write — in a loop to handle concurrent rolls.
+        // Using a do-while loop handles the case where two threads both pass the
+        // size check: the second thread will find the new (smaller) segment and retry.
+        LogSegment segment;
+        do {
+            segment = activeSegment();
+            if (segment.size() + entrySize <= SEGMENT_SIZE_LIMIT) {
+                break;
+            }
+            // Roll to a new segment.
+            long newBaseOffset = baseOffset;
+            LOGGER.info("Rolling segment for " + topicName + "-" + partitionIndex +
+                    ": old segment size=" + segment.size() + " bytes, new segment at offset " + newBaseOffset);
+            segment.close();
+            createNewSegment(newBaseOffset);
+            // After rolling, loop back to re-check with the new active segment.
+        } while (true);
+
+        // Write the RecordBatch to the selected segment.
         // We prepend the base_offset (INT64) as per Kafka on-disk format.
         ByteBuffer framed = ByteBuffer.allocate(8 + recordBatchBytes.length);
         framed.putLong(baseOffset);
         framed.put(recordBatchBytes);
         framed.flip();
 
-        LogSegment segment = activeSegment();
-        int position = segment.appendRaw(framed.array());
+        long position = segment.appendRaw(framed.array());
 
         nextOffset.addAndGet(recordsCount);
 
-        // Write index entry.
-        int relativeOffset = 0; // First record in batch at this position
-        segment.writeIndexEntry(relativeOffset, position);
+        // Write index entry with the actual relative offset for this batch.
+        // relativeOffset = batch's baseOffset - segment's baseOffset
+        int relativeOffset = (int) (baseOffset - segment.getBaseOffset());
+        segment.writeIndexEntry(relativeOffset, (int) position);
 
         LOGGER.fine("Appended batch to " + topicName + "-" + partitionIndex +
                 " at offset " + baseOffset + " with " + recordsCount + " records");
@@ -193,24 +232,36 @@ public class Partition {
 
     /**
      * Finds the segment that contains the given offset using binary search.
+     * Returns the segment with the largest baseOffset that is <= the requested offset.
      */
     private LogSegment findSegmentForOffset(long offset) {
-        // Simple search: find the segment whose baseOffset <= offset
-        LogSegment result = null;
-        for (LogSegment segment : segments) {
-            if (segment.getBaseOffset() <= offset) {
-                result = segment;
+        if (segments.isEmpty()) {
+            return null;
+        }
+
+        // Binary search: find the rightmost segment with baseOffset <= offset.
+        int lo = 0;
+        int hi = segments.size() - 1;
+        int result = -1;
+
+        while (lo <= hi) {
+            int mid = lo + (hi - lo) / 2; // prevent overflow vs (lo + hi) / 2
+            long midBase = segments.get(mid).getBaseOffset();
+            if (midBase <= offset) {
+                result = mid;
+                lo = mid + 1;
             } else {
-                break;
+                hi = mid - 1;
             }
         }
-        return result;
+
+        return result >= 0 ? segments.get(result) : null;
     }
 
     /**
      * Finds the byte position within a segment for a given offset.
-     * Scans through the log sequentially, reading each batch's base_offset
-     * and batch_length to skip to the next batch until the correct position is found.
+     * First attempts index-based lookup via the .index file.
+     * Falls back to sequential scan if the index is unavailable.
      * <p>
      * On-disk layout per batch: base_offset(INT64) + batch_length(INT32) + batch_data(batch_length bytes)
      */
@@ -219,8 +270,26 @@ public class Partition {
             return 0;
         }
 
-        // Read the entire segment to scan for the correct position.
-        ByteBuffer data = segment.read(0, segment.size());
+        // Try index-based lookup first.
+        long offsetDelta = offset - segment.getBaseOffset();
+        // Guard against offset < baseOffset (shouldn't happen, but defensive)
+        if (offsetDelta < 0) {
+            return 0;
+        }
+        // Guard against overflow of int: if delta exceeds Integer.MAX_VALUE,
+        // the index cannot store it (INT32). Fall back to sequential scan.
+        if (offsetDelta > Integer.MAX_VALUE) {
+            return -1;  // signals fallback to sequential scan
+        }
+        int relativeOffset = (int) offsetDelta;
+
+        int indexPosition = segment.lookupPosition(relativeOffset);
+        if (indexPosition >= 0) {
+            return indexPosition;
+        }
+
+        // Fallback: sequential scan (original behavior)
+        ByteBuffer data = segment.read(0, (int) Math.min(segment.size(), (long) Integer.MAX_VALUE));
         int limit = data.limit();
         int pos = 0;
 
