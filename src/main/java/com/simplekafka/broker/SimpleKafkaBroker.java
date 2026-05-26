@@ -76,6 +76,10 @@ public class SimpleKafkaBroker {
         return metadataStore;
     }
 
+    public ProduceHandler getProduceHandler() {
+        return produceHandler;
+    }
+
     public BrokerInfo getBrokerInfo() {
         return brokerInfo;
     }
