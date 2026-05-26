@@ -265,6 +265,74 @@ TAG_BUFFER: TAGGED_FIELDS (variable)
 23. **Controller election** (KRaft-style)
 24. **Client producer/consumer** end-to-end
 
+### Phase 6: Storage Robustness & Performance (P0)
+25. **Segment rolling (size-based)**
+    - Enforce `SEGMENT_SIZE_LIMIT` in `Partition.appendRecordBatch()`
+    - When active segment exceeds limit, call `createNewSegment(nextOffset)`
+    - Close old segment, open new log/index file pair
+
+26. **Index-based offset lookup**
+    - Add `LogSegment.lookupPosition(relativeOffset)` to binary-search `.index` file
+    - Replace sequential scan in `Partition.findPositionForOffset()` with index lookup
+    - Replace linear scan in `Partition.findSegmentForOffset()` with binary search
+
+27. **Log durability (fsync)**
+    - Call `FileChannel.force(false)` after each append in `LogSegment`
+    - Add `force()` on `close()`
+    - Configurable flush interval (fsync every N writes or N milliseconds)
+
+28. **Configurable log directory**
+    - Extract `LOG_DIR` from `ProduceHandler`/`ClusterMetadataLog` into `shared/Config.java`
+    - Accept log directory via constructor or properties file
+    - Update `SimpleKafkaBroker` to pass config through to all components
+
+### Phase 7: Multi-Broker & Replication (P1)
+29. **Multi-broker configuration**
+    - `shared/Config.java` with `broker.id`, `listeners`, `log.dirs`
+    - Properties file parsing
+    - Per-broker identity
+
+30. **Inter-broker communication**
+    - Internal broker-to-broker channel
+    - Replication pull request protocol
+
+31. **ISR replication**
+    - Follower pulls records from leader
+    - ISR set management (add/remove followers)
+    - `acks=-1` waits for ISR sync
+
+32. **Partition leader election**
+    - Epoch-based leader election
+    - Leader fencing on epoch mismatch
+    - `LeaderAndIsr` request handling
+
+33. **Real controller election**
+    - Multi-broker controller quorum
+    - Controller failover
+
+### Phase 8: Transactional Producers (P2)
+34. **Idempotent producers**
+    - Sequence number tracking per producer ID
+    - Deduplication on broker side
+
+35. **Transaction protocol**
+    - `InitProducerId` handler
+    - `AddPartitionsToTxn` handler
+    - `EndTxn` (commit/abort) handler
+
+36. **Transaction log**
+    - `__transaction_state` topic
+    - Transaction state persistence and recovery
+
+### Phase 9: Security (P2)
+37. **SASL authentication**
+    - Authentication framework in `shared/auth/`
+    - Plain/SASL mechanism support
+
+38. **ACL authorization**
+    - ACL storage and lookup in `shared/auth/`
+    - Per-request authorization check
+
 ---
 
 ## Testing

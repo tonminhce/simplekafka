@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-26T03:03:59.560Z
-last_updated: 2026-05-26T15:30:00.000Z
+last_updated: 2026-05-26T20:00:00.000Z
 project: simplekafka
 project_key: NOKEY
 tracking_system: file-system
@@ -91,16 +91,16 @@ development_status:
   6-2-index-offset-lookup: done
   6-3-durability-fsync: done
   6-4-configurable-log-dir: done
-  epic-6-retrospective: optional
+  epic-6-retrospective: done
 
   # Epic 7: Multi-Broker & Replication
-  epic-7: backlog
+  epic-7: in-progress
   7-1-multi-broker-config: ready-for-dev
   7-2-inter-broker-communication: ready-for-dev
   7-3-isr-replication: ready-for-dev
   7-4-leader-election: ready-for-dev
   7-5-controller-election: ready-for-dev
-  epic-7-retrospective: optional
+  epic-7-retrospective: ready-for-dev
 
   # Epic 8: Transactional Producers
   epic-8: backlog

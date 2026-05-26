@@ -37,6 +37,20 @@ FR21: Broker must handle Produce request with multiple topics
 FR22: Broker must persist topic/partition creation records to __cluster_metadata log
 FR23: Broker must implement KRaft-style controller election
 FR24: Client must send and receive messages end-to-end (producer/consumer)
+FR25: Broker must enforce SEGMENT_SIZE_LIMIT and roll to new segment when exceeded
+FR26: Broker must use .index file for binary search offset-to-position lookup
+FR27: Broker must fsync log writes for durability and flush on close
+FR28: Broker must accept configurable log directory from config file or constructor
+FR29: Broker must support multi-broker configuration with broker.id, listeners, log.dirs
+FR30: Broker must implement inter-broker communication channel for replication
+FR31: Broker must implement follower pull replication with ISR set management
+FR32: Broker must implement epoch-based partition leader election with fencing
+FR33: Broker must implement real multi-broker controller election
+FR34: Broker must track sequence numbers per producer ID for deduplication
+FR35: Broker must handle InitProducerId, AddPartitionsToTxn, EndTxn requests
+FR36: Broker must persist transaction state to __transaction_state log
+FR37: Broker must support SASL authentication framework
+FR38: Broker must support ACL-based authorization per request
 
 ### NonFunctional Requirements
 
@@ -97,6 +111,26 @@ Topics persist with creation records, controller elected via KRaft, end-to-end p
 
 **FRs covered:** FR22, FR23, FR24
 
+### Epic 6: Storage Robustness & Performance
+Fix foundation-level storage issues — segment rolling enforcement, index-based offset lookups, log durability, and configurable log directory.
+
+**FRs covered:** FR25, FR26, FR27, FR28
+
+### Epic 7: Multi-Broker & Replication
+Enable multi-broker deployment with configuration, inter-broker communication, partition replication, ISR management, leader election, and real controller election.
+
+**FRs covered:** FR29, FR30, FR31, FR32, FR33
+
+### Epic 8: Transactional Producers
+Implement idempotent producers with sequence tracking, transaction protocol (init/commit/abort), and transaction state log persistence.
+
+**FRs covered:** FR34, FR35, FR36
+
+### Epic 9: Security
+Add SASL authentication framework and ACL-based authorization per request.
+
+**FRs covered:** FR37, FR38
+
 ### FR Coverage Map
 
 FR1: Epic 1 - Broker responds to ApiVersions with supported API versions
@@ -123,3 +157,17 @@ FR21: Epic 3 - Broker handles Produce with multiple topics
 FR22: Epic 5 - Broker persists topic/partition creation records to __cluster_metadata
 FR23: Epic 5 - Broker implements KRaft-style controller election
 FR24: Epic 5 - End-to-end producer/consumer works
+FR25: Epic 6 - Enforce SEGMENT_SIZE_LIMIT, roll to new segment when exceeded
+FR26: Epic 6 - Read .index file for binary search offset-to-position lookup
+FR27: Epic 6 - fsync after log writes, flush on close
+FR28: Epic 6 - Configurable log directory from config file/constructor
+FR29: Epic 7 - Multi-broker configuration with broker.id, listeners, log.dirs
+FR30: Epic 7 - Inter-broker communication channel for replication pulls
+FR31: Epic 7 - Follower pull replication, ISR set management
+FR32: Epic 7 - Epoch-based leader election with fencing
+FR33: Epic 7 - Real controller election among multiple brokers
+FR34: Epic 8 - Sequence number tracking and deduplication
+FR35: Epic 8 - InitProducerId, AddPartitionsToTxn, EndTxn handlers
+FR36: Epic 8 - Transaction state log persistence
+FR37: Epic 9 - SASL authentication framework
+FR38: Epic 9 - ACL-based authorization per request

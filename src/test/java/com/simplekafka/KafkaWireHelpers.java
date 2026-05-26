@@ -214,12 +214,129 @@ final class KafkaWireHelpers {
     // ----------------------------------------------- Produce request helpers
 
     /**
-     * Builds a minimal RecordBatch with one record.
-     * The batch contains a properly formatted header so the broker can
-     * parse recordsCount.
+     * Builds a minimal valid RecordBatch with one record (value only, no key).
+     * The batch contains a properly formatted header so the broker can parse recordsCount.
      */
     static byte[] buildSingleRecordBatch(String value) {
         return buildRecordBatch(new String[]{value});
+    }
+
+    // -------------------------------------------------------------------------
+    // Test RecordBatch builders
+    // These build batches that match exactly what Partition.appendRecordBatch()
+    // writes to disk, used across SegmentRollingTest, IndexLookupTest, DurabilityTest.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Builds a test RecordBatch with the specified number of records and
+     * a fixed-value payload per record.
+     *
+     * <p>This matches the format that {@link com.simplekafka.broker.Partition#appendRecordBatch}
+     * writes to disk: base_offset(8 bytes) + batch_header + batch_data.
+     * The broker reads recordsCount from byte offset 45-48 of the batch.
+     *
+     * <p>Minimum batch size: 49 bytes (49-byte header + 0 records, not useful).
+     * For a 1-record batch with 0-byte value, the total is ~59 bytes.
+     *
+     * @param recordsCount  number of records in the batch (must be >= 1)
+     * @param valueSize     size of each record's value in bytes (payload padded to this size)
+     * @return raw RecordBatch bytes (minus the 8-byte base_offset prefix written by Partition)
+     */
+    static byte[] buildTestRecordBatch(int recordsCount, int valueSize) {
+        // Each record: attributes(1) + timestamp_delta(varint) + offset_delta(varint)
+        //              + key_length(varint=0) + value_length(varint) + value(bytes) + headers(1)
+        // With valueSize=0 and compact varint encoding, each record takes ~5-6 bytes + valueSize.
+        int recordOverhead = 6;
+        int recordSize = recordOverhead + valueSize;
+        int batchSize = 49 + recordsCount * recordSize; // 49 = header before records_count
+
+        ByteBuffer buf = ByteBuffer.allocate(batchSize);
+
+        buf.putInt(batchSize - 4);          // batch_length (excludes itself)
+        buf.putInt(0);                       // partition_leader_epoch
+        buf.put((byte) 2);                   // magic
+        buf.putInt(0);                       // crc (0 = no integrity check for test batches)
+        buf.putShort((short) 0);            // attributes
+        buf.putInt(recordsCount - 1);       // last_offset_delta
+        buf.putLong(System.currentTimeMillis()); // first_timestamp
+        buf.putLong(System.currentTimeMillis()); // max_timestamp
+        buf.putLong(0);                      // producer_id
+        buf.putShort((short) 0);            // producer_epoch
+        buf.putInt(0);                       // base_sequence
+        buf.putInt(recordsCount);           // records_count
+
+        // Write each record
+        for (int i = 0; i < recordsCount; i++) {
+            buf.put((byte) 0);              // record attributes
+            buf.put((byte) 0);              // timestamp_delta varint (0)
+            buf.put((byte) 0);              // offset_delta varint (0 for first record)
+            buf.put((byte) 0);              // key length = null (varint 0)
+            buf.put((byte) (valueSize + 1)); // value_length varint (N+1 where N = valueSize)
+            for (int v = 0; v < valueSize; v++) {
+                buf.put((byte) 'x');        // padding bytes
+            }
+            buf.put((byte) 0);              // headers count
+        }
+
+        buf.flip();
+        byte[] result = new byte[buf.remaining()];
+        buf.get(result);
+        return result;
+    }
+
+    /**
+     * Convenience overload: builds a single-record test batch with a 0-byte value.
+     */
+    static byte[] buildTestRecordBatch(int recordsCount) {
+        return buildTestRecordBatch(recordsCount, 0);
+    }
+
+    /**
+     * Builds a test RecordBatch with one record and a specific value.
+     * Value is written as UTF-8 bytes.
+     */
+    static byte[] buildTestRecordBatch(String value) {
+        byte[] valBytes = value.getBytes(StandardCharsets.UTF_8);
+        return buildTestRecordBatch(1, valBytes.length, valBytes);
+    }
+
+    /**
+     * Full control: records count, value size, and explicit value bytes.
+     */
+    static byte[] buildTestRecordBatch(int recordsCount, int valueSize, byte[] valueBytes) {
+        int recordOverhead = 6;
+        int recordSize = recordOverhead + valueSize;
+        int batchSize = 49 + recordsCount * recordSize;
+
+        ByteBuffer buf = ByteBuffer.allocate(batchSize);
+
+        buf.putInt(batchSize - 4);
+        buf.putInt(0);
+        buf.put((byte) 2);
+        buf.putInt(0);
+        buf.putShort((short) 0);
+        buf.putInt(recordsCount - 1);
+        buf.putLong(System.currentTimeMillis());
+        buf.putLong(System.currentTimeMillis());
+        buf.putLong(0);
+        buf.putShort((short) 0);
+        buf.putInt(0);
+        buf.putInt(recordsCount);
+
+        for (int i = 0; i < recordsCount; i++) {
+            buf.put((byte) 0);
+            buf.put((byte) 0);
+            buf.put((byte) 0);
+            buf.put((byte) 0);
+            buf.put((byte) (valueSize + 1));
+            buf.put(valueBytes);
+            buf.put((byte) 0);
+        }
+
+        buf.flip();
+        byte[] result = new byte[buf.remaining()];
+        buf.get(result);
+        return result;
     }
 
     /**
